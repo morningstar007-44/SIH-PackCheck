@@ -60,7 +60,7 @@ export const ProcessingPage: React.FC = () => {
         // Step 4: Identifying declarations (Pattern extraction)
         if (!isMounted) return;
         setStep(4);
-        const extractedDeclarations = patternExtractor.extract(ocrResult.fullText);
+        const extractedDeclarations = patternExtractor.extract(ocrResult.fullText, productName);
 
         // Step 5: Checking compliance rules
         if (!isMounted) return;
