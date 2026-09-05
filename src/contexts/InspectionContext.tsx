@@ -15,6 +15,22 @@ interface InspectionContextType {
 
 const InspectionContext = createContext<InspectionContextType | undefined>(undefined);
 
+const LS_KEY = 'packcheck_inspections';
+
+function loadLocalInspections(): Inspection[] {
+  try {
+    const stored = localStorage.getItem(LS_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return [];
+}
+
+function saveLocalInspections(inspections: Inspection[]) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(inspections));
+  } catch {}
+}
+
 export const InspectionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const [inspections, setInspections] = useState<Inspection[]>([]);
@@ -24,37 +40,37 @@ export const InspectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const refreshInspections = async () => {
     setLoading(true);
 
-    if (!isSupabaseConfigured() || !user) {
-      const stored = localStorage.getItem('packcheck_local_inspections');
-      if (stored) {
-        setInspections(JSON.parse(stored));
-      } else {
-        setInspections([]);
+    // Always start with localStorage data so nothing is ever lost
+    const localData = loadLocalInspections();
+    let mergedInspections = [...localData];
+
+    // Try to fetch from Supabase if configured and user is authenticated
+    if (isSupabaseConfigured() && user) {
+      try {
+        const { data, error } = await supabase
+          .from('inspections')
+          .select('*')
+          .order('inspection_date', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          // Merge: Supabase data takes priority, add any local-only records
+          const supabaseIds = new Set(data.map((d: any) => d.id));
+          const localOnly = localData.filter((item) => !supabaseIds.has(item.id));
+          mergedInspections = [...(data as Inspection[]), ...localOnly];
+        }
+      } catch (err) {
+        console.warn('Supabase inspections fetch error (using local data):', err);
       }
-      setLoading(false);
-      return;
     }
 
-    try {
-      const { data, error } = await supabase
-        .from('inspections')
-        .select('*')
-        .order('inspection_date', { ascending: false });
+    // Sort by date descending
+    mergedInspections.sort((a, b) => 
+      new Date(b.inspection_date).getTime() - new Date(a.inspection_date).getTime()
+    );
 
-      if (error) {
-        console.error('Supabase inspections fetch error:', error);
-        setInspections([]);
-      } else if (data) {
-        setInspections(data as Inspection[]);
-      } else {
-        setInspections([]);
-      }
-    } catch (err) {
-      console.error('Inspection fetch exception:', err);
-      setInspections([]);
-    } finally {
-      setLoading(false);
-    }
+    setInspections(mergedInspections);
+    saveLocalInspections(mergedInspections);
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -66,19 +82,19 @@ export const InspectionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setInspections(updated);
     setCurrentInspection(newInspection);
 
-    if (!isSupabaseConfigured()) {
-      localStorage.setItem('packcheck_local_inspections', JSON.stringify(updated));
-      return;
-    }
+    // Always save to localStorage first — this is the safety net
+    saveLocalInspections(updated);
 
-    try {
-      const { error } = await supabase.from('inspections').insert([newInspection]);
-      if (error) {
-        console.error('Error inserting inspection into Supabase:', error);
-        localStorage.setItem('packcheck_local_inspections', JSON.stringify(updated));
+    // Then try Supabase
+    if (isSupabaseConfigured() && user) {
+      try {
+        const { error } = await supabase.from('inspections').insert([newInspection]);
+        if (error) {
+          console.warn('Supabase inspection insert error (saved locally):', error.message);
+        }
+      } catch (err) {
+        console.warn('Supabase inspection insert exception (saved locally):', err);
       }
-    } catch (err) {
-      console.error('Exception inserting inspection:', err);
     }
   };
 
