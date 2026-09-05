@@ -106,29 +106,37 @@ export function useCamera(): UseCameraReturn {
   }, []);
 
   const capture = useCallback((): Blob | null => {
-    if (!videoRef.current || status !== 'active') return null;
+    if (!videoRef.current) return null;
 
     const video = videoRef.current;
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+
     const canvas = canvasRef.current || document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = width;
+    canvas.height = height;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, width, height);
 
-    let blobResult: Blob | null = null;
-    canvas.toBlob(
-      (blob) => {
-        blobResult = blob;
-      },
-      'image/jpeg',
-      0.9
-    );
-
-    return blobResult;
-  }, [status]);
+    try {
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    } catch (err) {
+      console.error('Canvas snapshot error:', err);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
