@@ -61,7 +61,7 @@ export const SignUpPage: React.FC = () => {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Inspector Rajesh Kumar"
+                placeholder="e.g. Kolla Aniketh"
                 className="w-full bg-white border border-[#DEE2E6] rounded-lg px-3 py-2.5 text-sm text-[#212529] placeholder:text-[#ADB5BD] focus:outline-none focus:ring-2 focus:ring-[#1971C2] focus:ring-offset-1 focus:border-[#1971C2]"
                 required
               />

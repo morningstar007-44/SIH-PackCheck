@@ -13,7 +13,7 @@ export const ReportPage: React.FC = () => {
   const { profile, user } = useAuth();
 
   const inspection = id ? getInspectionById(id) : undefined;
-  const inspectorName = profile?.full_name || user?.email || 'Inspector Rajesh Kumar';
+  const inspectorName = profile?.full_name || user?.email || 'Inspector';
 
   if (!inspection) {
     return (
