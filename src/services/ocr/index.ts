@@ -1,5 +1,8 @@
 import { TesseractOCRService } from './tesseractService';
+import { OpenAIOCRService } from './openAIService';
 import type { OCRService } from './types';
 
-export const ocrService: OCRService = new TesseractOCRService();
+const hasOpenAIKey = Boolean(import.meta.env.VITE_OPENAI_API_KEY);
+export const ocrService: OCRService = hasOpenAIKey ? new OpenAIOCRService() : new TesseractOCRService();
 export * from './types';
+
