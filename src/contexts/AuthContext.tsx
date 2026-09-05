@@ -29,7 +29,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (error) {
-        console.error('Error fetching profile from Supabase:', error);
+        console.warn('Profile lookup query warning:', error);
       }
 
       if (data && data.full_name) {
@@ -44,11 +44,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           organization: 'Department of Legal Metrology',
         };
         setProfile(defaultProfile);
-        // Automatically save initial profile in Supabase table
-        await supabase.from('profiles').upsert([defaultProfile]);
+        // Attempt to persist profile, ignore if table permissions or triggers aren't active yet
+        try {
+          await supabase.from('profiles').upsert([defaultProfile]);
+        } catch {
+          // ignore profile insert error
+        }
       }
     } catch (err) {
-      console.error('Profile fetch exception:', err);
+      console.warn('Profile fetch exception caught:', err);
+      // Ensure profile is fallback populated
+      setProfile({
+        id: sessionUser.id,
+        full_name: sessionUser.user_metadata?.full_name || sessionUser.email?.split('@')[0] || 'Inspector',
+        role: 'inspector',
+        organization: 'Department of Legal Metrology',
+      });
     } finally {
       setLoading(false);
     }
