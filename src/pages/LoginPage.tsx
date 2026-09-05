@@ -31,7 +31,7 @@ export const LoginPage: React.FC = () => {
     setSubmitting(false);
 
     if (err) {
-      setError('Invalid email or password. Please try again.');
+      setError(err.message || 'Invalid email or password. Please try again.');
     } else {
       navigate('/overview');
     }
