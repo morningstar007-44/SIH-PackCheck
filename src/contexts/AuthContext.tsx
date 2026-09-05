@@ -15,10 +15,40 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Keys for localStorage fallback session
+const LS_USER = 'packcheck_user';
+const LS_PROFILE = 'packcheck_profile';
+
+function loadLocalSession(): { user: User | null; profile: UserProfile | null } {
+  try {
+    const u = localStorage.getItem(LS_USER);
+    const p = localStorage.getItem(LS_PROFILE);
+    if (u && p) return { user: JSON.parse(u), profile: JSON.parse(p) };
+  } catch {}
+  return { user: null, profile: null };
+}
+
+function saveLocalSession(user: any, profile: UserProfile) {
+  localStorage.setItem(LS_USER, JSON.stringify(user));
+  localStorage.setItem(LS_PROFILE, JSON.stringify(profile));
+}
+
+function clearLocalSession() {
+  localStorage.removeItem(LS_USER);
+  localStorage.removeItem(LS_PROFILE);
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
+  const buildDefaultProfile = (id: string, email?: string, fullName?: string): UserProfile => ({
+    id,
+    full_name: fullName || email?.split('@')[0] || 'Inspector',
+    role: 'inspector',
+    organization: 'Department of Legal Metrology',
+  });
 
   const fetchProfile = async (sessionUser: User) => {
     try {
@@ -28,147 +58,135 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq('id', sessionUser.id)
         .maybeSingle();
 
-      if (error) {
-        console.warn('Profile lookup query warning:', error);
-      }
-
-      if (data && data.full_name) {
+      if (!error && data && data.full_name) {
         setProfile(data as UserProfile);
-      } else {
-        const metaName = sessionUser.user_metadata?.full_name;
-        const fallbackName = metaName || sessionUser.email?.split('@')[0] || 'Inspector';
-        const defaultProfile: UserProfile = {
-          id: sessionUser.id,
-          full_name: fallbackName,
-          role: 'inspector',
-          organization: 'Department of Legal Metrology',
-        };
-        setProfile(defaultProfile);
-        // Attempt to persist profile, ignore if table permissions or triggers aren't active yet
-        try {
-          await supabase.from('profiles').upsert([defaultProfile]);
-        } catch {
-          // ignore profile insert error
-        }
+        return;
       }
     } catch (err) {
-      console.warn('Profile fetch exception caught:', err);
-      // Ensure profile is fallback populated
-      setProfile({
-        id: sessionUser.id,
-        full_name: sessionUser.user_metadata?.full_name || sessionUser.email?.split('@')[0] || 'Inspector',
-        role: 'inspector',
-        organization: 'Department of Legal Metrology',
-      });
-    } finally {
-      setLoading(false);
+      console.warn('Profile fetch error (non-fatal):', err);
     }
+
+    // Fallback: build profile from user metadata
+    const fallback = buildDefaultProfile(
+      sessionUser.id,
+      sessionUser.email,
+      sessionUser.user_metadata?.full_name
+    );
+    setProfile(fallback);
+
+    // Try to upsert the profile so it exists for next time
+    try {
+      await supabase.from('profiles').upsert([fallback], { onConflict: 'id' });
+    } catch {}
   };
 
+  // === Session Initialization ===
   useEffect(() => {
-    if (!isSupabaseConfigured()) {
-      const storedUser = localStorage.getItem('packcheck_demo_user');
-      const storedProfile = localStorage.getItem('packcheck_demo_profile');
-      if (storedUser && storedProfile) {
-        setUser(JSON.parse(storedUser));
-        setProfile(JSON.parse(storedProfile));
-      } else {
-        setUser(null);
-        setProfile(null);
+    let mounted = true;
+
+    const initSession = async () => {
+      // 1. Try real Supabase session first
+      if (isSupabaseConfigured()) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user && mounted) {
+            setUser(session.user);
+            await fetchProfile(session.user);
+            // Persist to localStorage as backup
+            const p = buildDefaultProfile(session.user.id, session.user.email, session.user.user_metadata?.full_name);
+            saveLocalSession(session.user, p);
+            if (mounted) setLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.warn('Supabase getSession error:', err);
+        }
       }
-      setLoading(false);
-      return;
+
+      // 2. Fallback: load from localStorage (covers email-not-confirmed sessions + demo mode)
+      const local = loadLocalSession();
+      if (local.user && mounted) {
+        setUser(local.user);
+        setProfile(local.profile);
+      }
+
+      if (mounted) setLoading(false);
+    };
+
+    initSession();
+
+    // Listen for auth state changes (real Supabase sessions)
+    let subscription: { unsubscribe: () => void } | null = null;
+    if (isSupabaseConfigured()) {
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (!mounted) return;
+        if (session?.user) {
+          setUser(session.user);
+          fetchProfile(session.user);
+          const p = buildDefaultProfile(session.user.id, session.user.email, session.user.user_metadata?.full_name);
+          saveLocalSession(session.user, p);
+        } else {
+          // Only clear if explicitly signed out (not on page refresh)
+          if (_event === 'SIGNED_OUT') {
+            setUser(null);
+            setProfile(null);
+            clearLocalSession();
+          }
+        }
+      });
+      subscription = data.subscription;
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user);
-        fetchProfile(session.user);
-      } else {
-        setUser(null);
-        setProfile(null);
-        setLoading(false);
-      }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser(session.user);
-        fetchProfile(session.user);
-      } else {
-        setUser(null);
-        setProfile(null);
-        setLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
   }, []);
 
+  // === Sign In ===
   const signIn = async (email: string, password: string) => {
     if (!isSupabaseConfigured()) {
-      const demoU: any = {
-        id: 'local-user',
-        email,
-        user_metadata: { full_name: 'Inspector' },
-      };
-      const demoP: UserProfile = {
-        id: 'local-user',
-        full_name: 'Inspector',
-        role: 'inspector',
-        organization: 'Department of Legal Metrology',
-      };
-      setUser(demoU);
-      setProfile(demoP);
-      localStorage.setItem('packcheck_demo_user', JSON.stringify(demoU));
-      localStorage.setItem('packcheck_demo_profile', JSON.stringify(demoP));
+      const demoUser: any = { id: 'local-user', email, user_metadata: { full_name: email.split('@')[0] } };
+      const demoProfile = buildDefaultProfile('local-user', email);
+      setUser(demoUser);
+      setProfile(demoProfile);
+      saveLocalSession(demoUser, demoProfile);
       return { error: null };
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error && error.message.toLowerCase().includes('email not confirmed')) {
-      // Fallback auto-session for unconfirmed email environments
-      const fallbackUser: any = {
-        id: 'user-' + btoa(email).slice(0, 8),
-        email,
-        user_metadata: { full_name: email.split('@')[0] },
-      };
-      const fallbackProfile: UserProfile = {
-        id: fallbackUser.id,
-        full_name: email.split('@')[0],
-        role: 'inspector',
-        organization: 'Department of Legal Metrology',
-      };
-      setUser(fallbackUser);
-      setProfile(fallbackProfile);
-      localStorage.setItem('packcheck_demo_user', JSON.stringify(fallbackUser));
-      localStorage.setItem('packcheck_demo_profile', JSON.stringify(fallbackProfile));
-      return { error: null };
+
+    if (error) {
+      // Handle "Email not confirmed" — create local session so user can still use the app
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        const fallbackId = 'unconfirmed-' + btoa(email).slice(0, 12);
+        const fallbackUser: any = { id: fallbackId, email, user_metadata: { full_name: email.split('@')[0] } };
+        const fallbackProfile = buildDefaultProfile(fallbackId, email);
+        setUser(fallbackUser);
+        setProfile(fallbackProfile);
+        saveLocalSession(fallbackUser, fallbackProfile);
+        return { error: null };
+      }
+      return { error };
     }
-    if (!error && data.user) {
+
+    if (data.user) {
       setUser(data.user);
       await fetchProfile(data.user);
+      const p = buildDefaultProfile(data.user.id, data.user.email, data.user.user_metadata?.full_name);
+      saveLocalSession(data.user, p);
     }
-    return { error };
+    return { error: null };
   };
 
+  // === Sign Up ===
   const signUp = async (email: string, password: string, fullName: string) => {
     if (!isSupabaseConfigured()) {
-      const demoU: any = {
-        id: 'local-user',
-        email,
-        user_metadata: { full_name: fullName },
-      };
-      const demoP: UserProfile = {
-        id: 'local-user',
-        full_name: fullName,
-        role: 'inspector',
-        organization: 'Department of Legal Metrology',
-      };
-      setUser(demoU);
-      setProfile(demoP);
-      localStorage.setItem('packcheck_demo_user', JSON.stringify(demoU));
-      localStorage.setItem('packcheck_demo_profile', JSON.stringify(demoP));
+      const demoUser: any = { id: 'local-user', email, user_metadata: { full_name: fullName } };
+      const demoProfile = buildDefaultProfile('local-user', email, fullName);
+      setUser(demoUser);
+      setProfile(demoProfile);
+      saveLocalSession(demoUser, demoProfile);
       return { error: null };
     }
 
@@ -178,33 +196,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       options: { data: { full_name: fullName } },
     });
 
-    if (!error && data.user) {
-      const newProfile: UserProfile = {
-        id: data.user.id,
-        full_name: fullName,
-        role: 'inspector',
-        organization: 'Department of Legal Metrology',
-      };
-      setProfile(newProfile);
+    if (error) return { error };
+
+    if (data.user) {
+      // Even if email confirmation is pending, create a local session
+      const newProfile = buildDefaultProfile(data.user.id, email, fullName);
       setUser(data.user);
-      await supabase.from('profiles').upsert([newProfile]);
+      setProfile(newProfile);
+      saveLocalSession(data.user, newProfile);
+
+      // Try to insert profile row
+      try {
+        await supabase.from('profiles').upsert([newProfile], { onConflict: 'id' });
+      } catch {}
+    } else {
+      // Supabase returned no user (email confirmation required) — create local fallback
+      const fallbackId = 'signup-' + btoa(email).slice(0, 12);
+      const fallbackUser: any = { id: fallbackId, email, user_metadata: { full_name: fullName } };
+      const fallbackProfile = buildDefaultProfile(fallbackId, email, fullName);
+      setUser(fallbackUser);
+      setProfile(fallbackProfile);
+      saveLocalSession(fallbackUser, fallbackProfile);
     }
-    return { error };
+
+    return { error: null };
   };
 
+  // === Sign Out ===
   const signOut = async () => {
-    if (!isSupabaseConfigured()) {
-      setUser(null);
-      setProfile(null);
-      localStorage.removeItem('packcheck_demo_user');
-      localStorage.removeItem('packcheck_demo_profile');
-      return;
-    }
-    await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
+    clearLocalSession();
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+    }
   };
 
+  // === Update Profile ===
   const updateProfile = async (fullName: string, organization: string) => {
     if (!user) return { error: new Error('No active user') };
 
@@ -215,20 +245,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       organization,
     };
 
-    if (!isSupabaseConfigured()) {
-      setProfile(updated);
-      localStorage.setItem('packcheck_demo_profile', JSON.stringify(updated));
-      return { error: null };
+    setProfile(updated);
+    saveLocalSession(user, updated);
+
+    if (isSupabaseConfigured()) {
+      const { error } = await supabase
+        .from('profiles')
+        .upsert({ id: user.id, full_name: fullName, organization, updated_at: new Date().toISOString() });
+      if (error) return { error };
     }
 
-    const { error } = await supabase
-      .from('profiles')
-      .upsert({ id: user.id, full_name: fullName, organization, updated_at: new Date().toISOString() });
-
-    if (!error) {
-      setProfile(updated);
-    }
-    return { error };
+    return { error: null };
   };
 
   return (

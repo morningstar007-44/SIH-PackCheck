@@ -17,6 +17,7 @@ export function useCamera(): UseCameraReturn {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const facingModeRef = useRef<'user' | 'environment'>('environment');
 
   const [status, setStatus] = useState<UseCameraReturn['status']>('idle');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
@@ -34,8 +35,16 @@ export function useCamera(): UseCameraReturn {
     setStatus('idle');
   }, []);
 
-  const start = useCallback(async () => {
-    stop();
+  const startWithFacing = useCallback(async (facing: 'user' | 'environment') => {
+    // Stop any existing stream first
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
     setStatus('requesting');
     setErrorMessage(null);
 
@@ -46,43 +55,46 @@ export function useCamera(): UseCameraReturn {
     }
 
     try {
-      let devices: MediaDeviceInfo[] = [];
+      // Check available devices
       try {
-        devices = await navigator.mediaDevices.enumerateDevices();
+        const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter((d) => d.kind === 'videoinput');
         setHasMultipleCameras(videoDevices.length > 1);
-      } catch (e) {
-        // Enumerate fallback
-      }
+      } catch {}
 
-      // Progressive constraint fallback to maximize camera initialization success across laptops & mobiles
-      const primaryConstraints: MediaStreamConstraints = {
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-      };
-
-      const fallbackConstraints: MediaStreamConstraints = {
-        video: true,
-      };
-
+      // Try with specific facing mode first, then fall back to any camera
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
-      } catch (firstErr) {
-        console.warn('Primary camera constraints failed, attempting fallback:', firstErr);
-        stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facing },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+        });
+      } catch {
+        // Fallback: accept any video stream
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
 
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch((playErr) => console.error('Video play error:', playErr));
-        };
+        // Wait for metadata to load before playing
+        await new Promise<void>((resolve) => {
+          const video = videoRef.current!;
+          if (video.readyState >= 2) {
+            resolve();
+          } else {
+            video.onloadedmetadata = () => resolve();
+          }
+        });
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('Video play error:', playErr);
+        }
       }
 
       setStatus('active');
@@ -94,23 +106,37 @@ export function useCamera(): UseCameraReturn {
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setStatus('unavailable');
         setErrorMessage('No video camera device detected on this device.');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        setStatus('error');
+        setErrorMessage('Camera is in use by another application. Close other apps using the camera and try again.');
       } else {
         setStatus('error');
         setErrorMessage(err.message || 'Failed to initialize camera.');
       }
     }
-  }, [facingMode, stop]);
-
-  const switchCamera = useCallback(() => {
-    setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   }, []);
 
-  const capture = useCallback((): Blob | null => {
-    if (!videoRef.current) return null;
+  const start = useCallback(() => {
+    startWithFacing(facingModeRef.current);
+  }, [startWithFacing]);
 
+  const switchCamera = useCallback(() => {
+    const newMode = facingModeRef.current === 'environment' ? 'user' : 'environment';
+    facingModeRef.current = newMode;
+    setFacingMode(newMode);
+    // Restart camera with new facing mode
+    startWithFacing(newMode);
+  }, [startWithFacing]);
+
+  const capture = useCallback((): Blob | null => {
     const video = videoRef.current;
-    const width = video.videoWidth || 1280;
-    const height = video.videoHeight || 720;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      console.warn('Video not ready for capture');
+      return null;
+    }
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
 
     const canvas = canvasRef.current || document.createElement('canvas');
     canvas.width = width;
@@ -122,7 +148,7 @@ export function useCamera(): UseCameraReturn {
     ctx.drawImage(video, 0, 0, width, height);
 
     try {
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
       const arr = dataUrl.split(',');
       const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
       const bstr = atob(arr[1]);
@@ -140,9 +166,12 @@ export function useCamera(): UseCameraReturn {
 
   useEffect(() => {
     return () => {
-      stop();
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
     };
-  }, [stop]);
+  }, []);
 
   return {
     videoRef,

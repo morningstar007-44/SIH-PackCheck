@@ -21,6 +21,7 @@ export const CameraPage: React.FC = () => {
 
   const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
   const [capturedUrl, setCapturedUrl] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
     start();
@@ -30,16 +31,19 @@ export const CameraPage: React.FC = () => {
   }, []);
 
   const handleCapture = async () => {
+    setCaptureError(null);
     const rawBlob = capture();
-    if (rawBlob) {
-      try {
-        const compressed = await compressAndResizeImage(rawBlob, 2000, 0.85);
-        setCapturedBlob(compressed);
-        setCapturedUrl(URL.createObjectURL(compressed));
-      } catch (e) {
-        setCapturedBlob(rawBlob);
-        setCapturedUrl(URL.createObjectURL(rawBlob));
-      }
+    if (!rawBlob) {
+      setCaptureError('Camera not ready. Please wait a moment and try again.');
+      return;
+    }
+    try {
+      const compressed = await compressAndResizeImage(rawBlob, 2000, 0.85);
+      setCapturedBlob(compressed);
+      setCapturedUrl(URL.createObjectURL(compressed));
+    } catch (e) {
+      setCapturedBlob(rawBlob);
+      setCapturedUrl(URL.createObjectURL(rawBlob));
     }
   };
 
@@ -139,6 +143,13 @@ export const CameraPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Capture Error Feedback */}
+      {captureError && (
+        <div className="text-center text-xs text-amber-400 bg-black/60 px-3 py-1.5 rounded-full mb-1 z-10">
+          {captureError}
+        </div>
+      )}
 
       {/* Bottom Action Controls */}
       <div className="flex items-center justify-center gap-6 py-2 z-10">
