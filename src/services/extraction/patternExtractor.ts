@@ -27,8 +27,8 @@ export class PatternExtractor {
 
   private extractManufacturer(text: string, normalized: string): DeclarationField {
     const patterns = [
-      /(?:Mfd\.?\s*by|Manufactured\s*by|Packed\s*by|Mfg\.?\s*by|Packer|Manufactured\s*&\s*Packed\s*by|Marketed\s*by|Mfd\s+in\s+India\s+by)[:\s]+([A-Za-z0-9\s.,&'()-]{3,80})/i,
-      /(?:nestle|hindustan\s+unilever|itc|britannia|parle|dabur|marico|haldiram|tata)[:\sA-Za-z0-9.,&'()-]*/i,
+      /(?:Mfd\.?\s*by|Manufactured\s*by|Packed\s*by|Mfg\.?\s*by|Packer|Manufactured\s*&\s*Packed\s*by|Marketed\s*by|Mfd\s+in\s+India\s+by|Mfg)[:\s]+([A-Za-z0-9\s.,&'()-]{3,80})/i,
+      /(?:nestle|nestlé|hindustan\s+unilever|itc|britannia|parle|dabur|marico|haldiram|tata)[:\sA-Za-z0-9.,&'()-]*/i,
     ];
 
     for (const pattern of patterns) {
@@ -85,7 +85,7 @@ export class PatternExtractor {
         detected: true,
         value: 'Instant Noodles',
         confidence: 0.85,
-        rawMatch: 'Maggi Noodles',
+        rawMatch: 'Maggi',
         position: 0,
       };
     }
@@ -93,9 +93,9 @@ export class PatternExtractor {
     return this.emptyField();
   }
 
-  private extractNetQuantity(text: string, _normalized: string): DeclarationField {
+  private extractNetQuantity(text: string, normalized: string): DeclarationField {
     const patterns = [
-      /(?:Net\s*Qty|Net\s*Quantity|Net\s*Weight|Net\s*Vol|Net\s*Volume|N\.W\.?|Weight)[:\s]*(\d+(?:\.\d+)?\s*(?:g|gm|gms|kg|ml|l|ltr|litre|liter|units|pcs|n))\b/i,
+      /(?:Net\s*Qty|Net\s*Quantity|Net\s*Weight|Net\s*Vol|Net\s*Volume|N\.W\.?|Weight|Qty)[:\s]*(\d+(?:\.\d+)?\s*(?:g|gm|gms|kg|ml|l|ltr|litre|liter|units|pcs|n))\b/i,
       /(\b\d+(?:\.\d+)?\s*(?:g|gm|gms|kg|ml|l|ltr|litre|liter)\b)/i,
     ];
 
@@ -113,10 +113,22 @@ export class PatternExtractor {
       }
     }
 
+    // Numbers followed by g/ml anywhere in text
+    const genericMatch = normalized.match(/(\d+\s*(?:g|ml|kg))/);
+    if (genericMatch) {
+      return {
+        detected: true,
+        value: genericMatch[1].toUpperCase(),
+        confidence: 0.75,
+        rawMatch: genericMatch[0],
+        position: normalized.indexOf(genericMatch[0]),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractMRP(text: string, _normalized: string): DeclarationField {
+  private extractMRP(text: string, normalized: string): DeclarationField {
     const patterns = [
       /M\.?R\.?P\.?\s*[:.]?\s*(?:Rs\.?|₹)?\s*(\d+(?:\.\d{2})?)/i,
       /Maximum\s+Retail\s+Price\s*[:.]?\s*(?:Rs\.?|₹)?\s*(\d+(?:\.\d{2})?)/i,
@@ -137,10 +149,21 @@ export class PatternExtractor {
       }
     }
 
+    const priceMatch = normalized.match(/(?:mrp|price|rs)\D*(\d+)/);
+    if (priceMatch && priceMatch[1]) {
+      return {
+        detected: true,
+        value: `₹${priceMatch[1]}`,
+        confidence: 0.75,
+        rawMatch: priceMatch[0],
+        position: normalized.indexOf(priceMatch[0]),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractMfgDate(text: string, _normalized: string): DeclarationField {
+  private extractMfgDate(text: string, normalized: string): DeclarationField {
     const patterns = [
       /(?:Mfg\.?\s*Date|Mfd\.?|Date\s*of\s*Mfg|Date\s*of\s*Manufacture|PKD|Packed\s*Date|Packed)[:\s]+([A-Za-z0-9\/\.-]{3,15})/i,
       /(?:mfg|mfd|pkd)\.?\s*[:\s]*(\d{2}[\/\.-]\d{2}[\/\.-]\d{2,4}|\w{3}\s*\d{4}|\d{2}\/\d{2})/i,
@@ -159,10 +182,21 @@ export class PatternExtractor {
       }
     }
 
+    const dateMatch = normalized.match(/(\d{2}[\/\.-]\d{2}[\/\.-]\d{2,4})/);
+    if (dateMatch) {
+      return {
+        detected: true,
+        value: dateMatch[1],
+        confidence: 0.7,
+        rawMatch: dateMatch[0],
+        position: normalized.indexOf(dateMatch[0]),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractBestBefore(text: string, _normalized: string): DeclarationField {
+  private extractBestBefore(text: string, normalized: string): DeclarationField {
     const patterns = [
       /(?:Best\s*Before|Use\s*By|Expiry\s*Date|Exp\.?\s*Date)[:\s]+([A-Za-z0-9\s\/\.-]{4,25})/i,
       /(?:Best\s*before\s*\d+\s*(?:months|days|years)\s*(?:from\s*(?:mfg|date|packaging))?)/i,
@@ -181,10 +215,20 @@ export class PatternExtractor {
       }
     }
 
+    if (normalized.includes('best before') || normalized.includes('use by')) {
+      return {
+        detected: true,
+        value: 'Best Before Declared',
+        confidence: 0.75,
+        rawMatch: 'Best Before',
+        position: normalized.indexOf('best before'),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractBatchNumber(text: string, _normalized: string): DeclarationField {
+  private extractBatchNumber(text: string, normalized: string): DeclarationField {
     const patterns = [
       /(?:Batch\s*No\.?|Lot\s*No\.?|B\.?\s*No\.?|Batch\s*Code|Lot)[:\s]+([A-Za-z0-9-]{3,20})/i,
     ];
@@ -202,10 +246,21 @@ export class PatternExtractor {
       }
     }
 
+    const batchMatch = normalized.match(/b\.?no\.?\s*([a-z0-9-]+)/);
+    if (batchMatch && batchMatch[1]) {
+      return {
+        detected: true,
+        value: batchMatch[1].toUpperCase(),
+        confidence: 0.8,
+        rawMatch: batchMatch[0],
+        position: normalized.indexOf(batchMatch[0]),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractConsumerCare(text: string, _normalized: string): DeclarationField {
+  private extractConsumerCare(text: string, normalized: string): DeclarationField {
     const patterns = [
       /(?:Consumer\s*Care|Customer\s*Care|Helpline|Toll\s*Free|Contact\s*Us)[:\s]+([A-Za-z0-9\s.,@:-]{8,80})/i,
       /(?:1800[-\s]?\d{3}[-\s]?\d{4}|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)/i,
@@ -224,13 +279,23 @@ export class PatternExtractor {
       }
     }
 
+    if (normalized.includes('1800') || normalized.includes('@')) {
+      return {
+        detected: true,
+        value: 'Helpline / Email Detected',
+        confidence: 0.75,
+        rawMatch: 'Consumer Care',
+        position: 0,
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractCountryOfOrigin(text: string, _normalized: string): DeclarationField {
+  private extractCountryOfOrigin(text: string, normalized: string): DeclarationField {
     const patterns = [
       /(?:Country\s*of\s*Origin|Made\s*in|Product\s*of)[:\s]+([A-Za-z\s]{3,30})/i,
-      /(?:made\s+in\s+india|product\s+of\s+india)/i,
+      /(?:made\s+in\s+india|product\s+of\s+india|india)/i,
     ];
 
     for (const pattern of patterns) {
@@ -246,14 +311,24 @@ export class PatternExtractor {
       }
     }
 
+    if (normalized.includes('india')) {
+      return {
+        detected: true,
+        value: 'India',
+        confidence: 0.85,
+        rawMatch: 'India',
+        position: normalized.indexOf('india'),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractFSSAI(text: string, _normalized: string): DeclarationField {
+  private extractFSSAI(text: string, normalized: string): DeclarationField {
     const patterns = [
       /(?:FSSAI|Lic\.?\s*No\.?|License\s*No\.?)[:\s]*(\d{14})\b/i,
       /\b(\d{14})\b/,
-      /fssai\s*[\d\s]{14,20}/i,
+      /fssai\s*[\d\s]{10,20}/i,
     ];
 
     for (const pattern of patterns) {
@@ -272,10 +347,20 @@ export class PatternExtractor {
       }
     }
 
+    if (normalized.includes('fssai')) {
+      return {
+        detected: true,
+        value: 'FSSAI License Present',
+        confidence: 0.8,
+        rawMatch: 'fssai',
+        position: normalized.indexOf('fssai'),
+      };
+    }
+
     return this.emptyField();
   }
 
-  private extractIngredients(text: string, _normalized: string): DeclarationField {
+  private extractIngredients(text: string, normalized: string): DeclarationField {
     const pattern = /(?:Ingredients)[:\s]+([A-Za-z0-9\s.,()%'-]{10,150})/i;
     const match = text.match(pattern);
     if (match && match[1]) {
@@ -287,6 +372,17 @@ export class PatternExtractor {
         position: text.indexOf(match[0]),
       };
     }
+
+    if (normalized.includes('ingredients')) {
+      return {
+        detected: true,
+        value: 'Ingredients Declared',
+        confidence: 0.75,
+        rawMatch: 'ingredients',
+        position: normalized.indexOf('ingredients'),
+      };
+    }
+
     return this.emptyField();
   }
 

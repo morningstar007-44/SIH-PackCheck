@@ -6,19 +6,7 @@ export class TesseractOCRService implements OCRService {
 
   private async getWorker(): Promise<Tesseract.Worker> {
     if (!this.workerPromise) {
-      this.workerPromise = (async () => {
-        const worker = await createWorker('eng');
-        try {
-          // Pre-load parameters for enhanced text recognition on commercial labels
-          await worker.setParameters({
-            tessedit_char_whitelist:
-              'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:-/()% ₹Rs',
-          });
-        } catch (e) {
-          // Ignore parameter errors if unsupported
-        }
-        return worker;
-      })();
+      this.workerPromise = createWorker('eng');
     }
     return this.workerPromise;
   }
