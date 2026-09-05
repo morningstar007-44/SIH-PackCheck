@@ -20,6 +20,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
+  const fetchProfile = async (sessionUser: User) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', sessionUser.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error fetching profile from Supabase:', error);
+      }
+
+      if (data && data.full_name) {
+        setProfile(data as UserProfile);
+      } else {
+        const metaName = sessionUser.user_metadata?.full_name;
+        const fallbackName = metaName || sessionUser.email?.split('@')[0] || 'Inspector';
+        const defaultProfile: UserProfile = {
+          id: sessionUser.id,
+          full_name: fallbackName,
+          role: 'inspector',
+          organization: 'Department of Legal Metrology',
+        };
+        setProfile(defaultProfile);
+        // Automatically save initial profile in Supabase table
+        await supabase.from('profiles').upsert([defaultProfile]);
+      }
+    } catch (err) {
+      console.error('Profile fetch exception:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isSupabaseConfigured()) {
       const storedUser = localStorage.getItem('packcheck_demo_user');
@@ -36,19 +70,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id);
+        setUser(session.user);
+        fetchProfile(session.user);
       } else {
+        setUser(null);
+        setProfile(null);
         setLoading(false);
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id);
+        setUser(session.user);
+        fetchProfile(session.user);
       } else {
+        setUser(null);
         setProfile(null);
         setLoading(false);
       }
@@ -56,35 +93,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => subscription.unsubscribe();
   }, []);
-
-  const fetchProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching profile:', error);
-      }
-      if (data) {
-        setProfile(data as UserProfile);
-      } else {
-        const metaName = user?.user_metadata?.full_name;
-        setProfile({
-          id: userId,
-          full_name: metaName || user?.email || 'Inspector',
-          role: 'inspector',
-          organization: 'Legal Metrology Dept',
-        });
-      }
-    } catch (err) {
-      console.error('Profile fetch exception:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const signIn = async (email: string, password: string) => {
     if (!isSupabaseConfigured()) {
@@ -106,7 +114,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: null };
     }
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (!error && data.user) {
+      setUser(data.user);
+      await fetchProfile(data.user);
+    }
     return { error };
   };
 
@@ -159,12 +171,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
   };
 
   const updateProfile = async (fullName: string, organization: string) => {
     if (!user) return { error: new Error('No active user') };
 
-    const updated = { ...profile, full_name: fullName, organization } as UserProfile;
+    const updated: UserProfile = {
+      id: user.id,
+      full_name: fullName,
+      role: 'inspector',
+      organization,
+    };
 
     if (!isSupabaseConfigured()) {
       setProfile(updated);
