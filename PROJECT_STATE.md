@@ -1,7 +1,7 @@
 # PROJECT STATE
-Last Updated: 2026-09-06 03:40
-Active Model: Claude Sonnet 4.6
-Session #: 2
+Last Updated: 2026-09-06 05:28
+Active Model: Gemini 3.6 Flash
+Session #: 3
 
 ## Project: PackCheck
 A complete, production-grade web application for Legal Metrology inspectors to verify product packaging compliance using OCR and rule evaluation.
@@ -10,7 +10,7 @@ A complete, production-grade web application for Legal Metrology inspectors to v
 - [x] Vite + React + TypeScript foundation with Tailwind CSS v4
 - [x] Database SQL schema migration (`supabase/schema.sql`) — clean, error-free, with auto-profile trigger + storage bucket
 - [x] Supabase Client & resilient AuthContext with localStorage-backed session persistence (survives page refresh)
-- [x] In-browser OCR Service layer abstraction using Tesseract.js
+- [x] Integrated OpenAI GPT-4o Vision OCR Service for real AI label text extraction (`src/services/ocr/openAIService.ts`)
 - [x] Pattern Extraction Service for Legal Metrology mandatory declarations
 - [x] Legal Metrology Rule Engine covering 10+ mandatory rules
 - [x] Camera hook with proper stream restart on camera switch, video readyState check, capture error feedback
@@ -21,29 +21,13 @@ A complete, production-grade web application for Legal Metrology inspectors to v
 - [x] Production build verified (zero TypeScript/build errors)
 - [x] Pushed to GitHub: https://github.com/morningstar007-44/SIH-PackCheck.git
 
-## 🔄 In Progress
-- [ ] User needs to run schema.sql in Supabase Dashboard SQL Editor
-
 ## 📋 Queued
-- [ ] Verify Vercel deployment after auto-deploy from push
-- [ ] Test full inspection flow on deployed HTTPS URL (camera requires HTTPS)
+- [ ] Add VITE_OPENAI_API_KEY environment variable to Vercel project settings for live production deployment.
 
 ## 📁 Files Modified This Session
-- `supabase/schema.sql` — Complete rewrite: DROP IF EXISTS policies, auto-profile trigger, storage bucket, TEXT PK for inspections
-- `src/contexts/AuthContext.tsx` — Complete rewrite: dual Supabase + localStorage session persistence, never logout on refresh
-- `src/hooks/useCamera.ts` — Fixed: switchCamera restarts stream, video readyState check, ref-based facingMode
-- `src/pages/CameraPage.tsx` — Added capture error feedback UI
-- `vercel.json` — Removed conflicting version/routes, clean rewrites + security headers
-- `index.html` — Title + meta description updated from temp-app to PackCheck
-- `package.json` — Name updated from temp-app to packcheck
+- `.env.local` — Added VITE_OPENAI_API_KEY
+- `src/services/ocr/openAIService.ts` — Created OpenAI GPT-4o Vision OCR integration
+- `src/services/ocr/index.ts` — Updated to switch to OpenAI OCR when key is configured
 
 ## 🧠 Decisions Made
-- [Auth] localStorage serves as backup session store — Supabase getSession is tried first, localStorage fallback if Supabase session missing
-- [Auth] Email-not-confirmed users get a local-only session so they can still use the app
-- [Auth] Only clear session on explicit SIGNED_OUT event, never on null session during init
-- [Schema] inspections.id is TEXT (not UUID) to match app-generated INS-YYYY-NNNN format
-- [Vercel] Removed `version: 2` and `routes` — Vercel auto-detects Vite, only needs `rewrites` for SPA
-
-## ⚠️ Blockers / Notes
-- User MUST run schema.sql in Supabase Dashboard → SQL Editor before profiles/inspections work with real DB
-- Camera only works on HTTPS (Vercel deployment URL) or localhost — will show fallback "Upload File Instead" on HTTP
+- [OCR] Switched from client-side Tesseract.js regex matching to OpenAI GPT-4o Vision for high accuracy text recognition on complex packaged commodity labels.
